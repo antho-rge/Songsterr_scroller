@@ -23,7 +23,7 @@ face_mesh = mp_face_mesh.FaceMesh(
 # Landmarks œil droit
 RIGHT_EYE_TOP = 159
 RIGHT_EYE_BOTTOM = 145
-RIGHT_IRIS_CENTER = 473
+RIGHT_IRIS_CENTER = 468
 
 # --- Variables d'état ---
 state = "CALIBRATE_NEUTRAL"
