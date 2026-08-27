@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import time
 import numpy as np
+import json
 from collections import deque
 
 # --- Configuration ---
@@ -10,13 +11,10 @@ WINDOW_SIZE = 10
 # --- Initialisation MediaPipe ---
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.6,
-    min_tracking_confidence=0.6
+    max_num_faces=1, refine_landmarks=True,
+    min_detection_confidence=0.6, min_tracking_confidence=0.6
 )
 
-# Landmarks œil droit
 RIGHT_EYE_TOP = 159
 RIGHT_EYE_BOTTOM = 145
 RIGHT_IRIS_CENTER = 468
@@ -24,25 +22,28 @@ RIGHT_IRIS_CENTER = 468
 # --- Variables d'état ---
 state = "CALIBRATE_NEUTRAL"
 calibration_start_time = time.time()
-neutral_ratios = []
-down_ratios = []
+neutral_ratios, down_ratios, up_ratios = [], [], []
 
-thresh_up = 0.0
-thresh_down = 0.0
-
+thresh_up, thresh_down = 0.0, 0.0
 ratio_history = deque(maxlen=WINDOW_SIZE)
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(3)
 
-# Mettre la fenêtre en mode redimensionnable pour que tu puisses l'agrandir
-cv2.namedWindow('Eye Tracking Debug', cv2.WINDOW_NORMAL)
+# Création de la fenêtre et forçage du plein écran
+cv2.namedWindow('Calibration', cv2.WINDOW_NORMAL)
+cv2.setWindowProperty('Calibration', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+def draw_target(img, x, y):
+    """Dessine une cible visible à l'écran"""
+    cv2.circle(img, (x, y), 15, (0, 0, 255), -1)
+    cv2.circle(img, (x, y), 25, (255, 255, 255), 2)
+    cv2.circle(img, (x, y), 35, (0, 0, 255), 2)
 
 while cap.isOpened():
     success, image = cap.read()
-    if not success:
+    if not success: 
         break
 
-    # Miroir horizontal
     image = cv2.flip(image, 1)
     h, w, _ = image.shape
 
@@ -71,83 +72,93 @@ while cap.isOpened():
 
     display = image.copy()
 
-    # Dessin des repères
     if eye_pts:
-        p_top, p_bottom, p_iris = eye_pts
-        cv2.circle(display, p_top, 3, (0, 255, 255), -1)
-        cv2.circle(display, p_bottom, 3, (0, 255, 255), -1)
-        cv2.circle(display, p_iris, 4, (0, 0, 255), -1)
-        cv2.line(display, (p_iris[0], p_top[1]), (p_iris[0], p_bottom[1]), (255, 0, 0), 1)
+        cv2.circle(display, eye_pts[0], 3, (0, 255, 255), -1)
+        cv2.circle(display, eye_pts[1], 3, (0, 255, 255), -1)
+        cv2.circle(display, eye_pts[2], 4, (0, 0, 255), -1)
+        cv2.line(display, (eye_pts[2][0], eye_pts[0][1]), (eye_pts[2][0], eye_pts[1][1]), (255, 0, 0), 1)
 
     if vertical_ratio is not None:
+        elapsed = current_time - calibration_start_time
+
         if state == "CALIBRATE_NEUTRAL":
-            cv2.putText(display, "1. Fixe le CENTRE de l'ecran", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            draw_target(display, w // 2, h // 2)
+            cv2.putText(display, "1. Fixe le CENTRE", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
             neutral_ratios.append(vertical_ratio)
-            
-            elapsed = current_time - calibration_start_time
-            cv2.putText(display, f"Temps : {3.0 - elapsed:.1f}s", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-            
+            cv2.putText(display, f"{3.0 - elapsed:.1f}s", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
             if elapsed > 3.0:
-                state = "CALIBRATE_DOWN"
-                calibration_start_time = current_time
+                state, calibration_start_time = "CALIBRATE_DOWN", current_time
 
         elif state == "CALIBRATE_DOWN":
-            cv2.putText(display, "2. Fixe le BAS de l'ecran", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+            draw_target(display, w // 2, h - 50)
+            cv2.putText(display, "2. Fixe le BAS", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
             down_ratios.append(vertical_ratio)
-            
-            elapsed = current_time - calibration_start_time
-            cv2.putText(display, f"Temps : {3.0 - elapsed:.1f}s", (30, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-            
+            cv2.putText(display, f"{3.0 - elapsed:.1f}s", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+            if elapsed > 3.0:
+                state, calibration_start_time = "CALIBRATE_UP", current_time
+
+        elif state == "CALIBRATE_UP":
+            draw_target(display, w // 2, 50)
+            cv2.putText(display, "3. Fixe le HAUT", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+            up_ratios.append(vertical_ratio)
+            cv2.putText(display, f"{3.0 - elapsed:.1f}s", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
             if elapsed > 3.0:
                 r_neutral = np.mean(neutral_ratios)
                 r_down = np.mean(down_ratios)
+                r_up = np.mean(up_ratios)
                 
-                # Calcul des seuils avec une marge stricte pour éviter les déclenchements parasites
-                marge = max((r_down - r_neutral) * 0.75, 0.015)
-                thresh_down = r_neutral + marge
-                thresh_up = r_neutral - marge # On déduit le haut symétriquement
+                # Calcul des seuils avec une marge stricte
+                thresh_down = r_neutral + max((r_down - r_neutral) * 0.75, 0.015)
+                thresh_up = r_neutral - max((r_neutral - r_up) * 0.75, 0.015)
                 
                 state = "RUNNING"
+                # Retour au mode fenêtré pour le paramétrage
+                cv2.setWindowProperty('Calibration', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
 
         elif state == "RUNNING":
             ratio_history.append(vertical_ratio)
             smoothed_ratio = np.mean(ratio_history)
 
-            # Détermination de la zone regardée
-            if smoothed_ratio > thresh_down:
-                gaze_zone = "BAS"
-            elif smoothed_ratio < thresh_up:
-                gaze_zone = "HAUT"
-            else:
-                gaze_zone = "MILIEU"
+            gaze_zone = "BAS" if smoothed_ratio > thresh_down else ("HAUT" if smoothed_ratio < thresh_up else "MILIEU")
 
-            # --- Affichage des indicateurs HAUT / MILIEU / BAS ---
-            def draw_indicator(text, y_pos, is_active):
-                color = (0, 255, 0) if is_active else (100, 100, 100)
-                thickness = 3 if is_active else 1
-                font_scale = 1.2 if is_active else 0.8
-                text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
-                x_pos = (w - text_size[0]) // 2 # Centrage horizontal
-                cv2.putText(display, text, (x_pos, y_pos), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+            def draw_ind(text, y, active):
+                color, thick, font_s = ((0, 255, 0), 3, 1.2) if active else ((100, 100, 100), 1, 0.8)
+                x = (w - cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_s, thick)[0][0]) // 2
+                cv2.putText(display, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_s, color, thick)
 
-            draw_indicator("--- HAUT ---", 40, gaze_zone == "HAUT")
-            draw_indicator("--- MILIEU ---", h // 2, gaze_zone == "MILIEU")
-            draw_indicator("--- BAS ---", h - 20, gaze_zone == "BAS")
+            draw_ind("--- HAUT ---", 40, gaze_zone == "HAUT")
+            draw_ind("--- MILIEU ---", h // 2, gaze_zone == "MILIEU")
+            draw_ind("--- BAS ---", h - 40, gaze_zone == "BAS")
 
-            # Infos de debug en haut à gauche
             cv2.putText(display, f"Ratio : {smoothed_ratio:.3f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            cv2.putText(display, "r: Recalibrer | q: Quitter", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+            cv2.putText(display, f"Seuil BAS : {thresh_down:.3f} ([a] + / [d] -)", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.putText(display, f"Seuil HAUT : {thresh_up:.3f} ([z] + / [s] -)", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            
+            cv2.putText(display, "[v] Valider et Sauvegarder | [r] Recalibrer", (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-    cv2.imshow('Eye Tracking Debug', display)
+    cv2.imshow('Calibration', display)
     
     key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
+    if key == ord('q'): 
         break
     elif key == ord('r') and state == "RUNNING":
-        state = "CALIBRATE_NEUTRAL"
-        neutral_ratios.clear()
-        down_ratios.clear()
+        state, neutral_ratios, down_ratios, up_ratios = "CALIBRATE_NEUTRAL", [], [], []
+        cv2.setWindowProperty('Calibration', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         calibration_start_time = time.time()
+        
+    # Touches de réglage (la fenêtre doit être sélectionnée)
+    elif key == ord('a') and state == "RUNNING": thresh_down += 0.01  
+    elif key == ord('d') and state == "RUNNING": thresh_down -= 0.01  
+    elif key == ord('z') and state == "RUNNING": thresh_up += 0.01  
+    elif key == ord('s') and state == "RUNNING": thresh_up -= 0.01  
+    
+    # Touche de validation
+    elif key == ord('v') and state == "RUNNING":
+        config = {"thresh_down": thresh_down, "thresh_up": thresh_up}
+        with open('config.json', 'w') as f:
+            json.dump(config, f)
+        print("Paramètres sauvegardés dans config.json.")
+        break
 
 cap.release()
 cv2.destroyAllWindows()
