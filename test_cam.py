@@ -27,7 +27,7 @@ neutral_ratios, down_ratios, up_ratios = [], [], []
 thresh_up, thresh_down = 0.0, 0.0
 ratio_history = deque(maxlen=WINDOW_SIZE)
 
-cap = cv2.VideoCapture(3)
+cap = cv2.VideoCapture(2)
 
 # Création de la fenêtre et forçage du plein écran
 cv2.namedWindow('Calibration', cv2.WINDOW_NORMAL)
