@@ -6,36 +6,31 @@ import json
 from collections import deque
 
 # --- Configuration ---
-WINDOW_SIZE = 10
+WINDOW_SIZE = 12
 CAMERA_INDEX = 0
 
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1, refine_landmarks=True,
+    max_num_faces=1, refine_landmarks=False,
     min_detection_confidence=0.6, min_tracking_confidence=0.6
 )
 
-LANDMARK_INDICES = [1, 199, 33, 263, 61, 291]
-face_3d_model = np.array([
-    (0.0, 0.0, 0.0),           
-    (0.0, -330.0, -65.0),      
-    (-225.0, 170.0, -135.0),   
-    (225.0, 170.0, -135.0),    
-    (-150.0, -150.0, -125.0),  
-    (150.0, -150.0, -125.0)    
-], dtype=np.float64)
+# Nouveaux repères 2D ultra-stables : Haut du front (10), Bout du nez (1), Bas du menton (152)
+FACE_TOP = 10
+FACE_NOSE = 1
+FACE_CHIN = 152
 
 state = "CALIBRATE_NEUTRAL"
 calibration_start_time = time.time()
-neutral_angles, down_angles = [], []
+neutral_ratios, down_ratios = [], []
 
 thresh_down = 0.0
 direction = 1
-angle_history = deque(maxlen=WINDOW_SIZE)
+ratio_history = deque(maxlen=WINDOW_SIZE)
 
 cap = cv2.VideoCapture(CAMERA_INDEX)
-cv2.namedWindow('Calibration Head Pose', cv2.WINDOW_NORMAL)
-cv2.setWindowProperty('Calibration Head Pose', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+cv2.namedWindow('Calibration Head', cv2.WINDOW_NORMAL)
+cv2.setWindowProperty('Calibration Head', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
 def draw_target(img, x, y):
     cv2.circle(img, (x, y), 15, (0, 0, 255), -1)
@@ -52,66 +47,69 @@ while cap.isOpened():
     results = face_mesh.process(image_rgb)
     
     current_time = time.time()
-    pitch_angle = None
-    face_2d_points = []
+    pitch_ratio = None
+    pts = None
 
     if results.multi_face_landmarks:
         landmarks = results.multi_face_landmarks[0].landmark
-        for idx in LANDMARK_INDICES:
-            lm = landmarks[idx]
-            face_2d_points.append((lm.x * w, lm.y * h))
         
-        face_2d_points = np.array(face_2d_points, dtype=np.float64)
-        focal_length = w
-        camera_matrix = np.array([[focal_length, 0, h / 2], [0, focal_length, w / 2], [0, 0, 1]], dtype=np.float64)
-        dist_matrix = np.zeros((4, 1), dtype=np.float64)
+        y_top = landmarks[FACE_TOP].y
+        y_nose = landmarks[FACE_NOSE].y
+        y_chin = landmarks[FACE_CHIN].y
+        
+        face_height = y_chin - y_top
+        if face_height > 0:
+            # Calcul de la position du nez par rapport à la hauteur totale du visage
+            pitch_ratio = (y_nose - y_top) / face_height
 
-        success_pnp, rot_vec, trans_vec = cv2.solvePnP(face_3d_model, face_2d_points, camera_matrix, dist_matrix)
-        
-        if success_pnp:
-            rmat, _ = cv2.Rodrigues(rot_vec)
-            _, _, _, _, _, _, angles = cv2.decomposeProjectionMatrix(np.matmul(camera_matrix, np.hstack((rmat, trans_vec))))
-            pitch_angle = angles[0]
+        pt_top = (int(landmarks[FACE_TOP].x * w), int(landmarks[FACE_TOP].y * h))
+        pt_nose = (int(landmarks[FACE_NOSE].x * w), int(landmarks[FACE_NOSE].y * h))
+        pt_chin = (int(landmarks[FACE_CHIN].x * w), int(landmarks[FACE_CHIN].y * h))
+        pts = (pt_top, pt_nose, pt_chin)
 
     display = image.copy()
-    if len(face_2d_points) > 0:
-        for p in face_2d_points:
-            cv2.circle(display, (int(p[0]), int(p[1])), 4, (0, 255, 0), -1)
+    
+    # Affichage des 3 points (Front, Nez, Menton)
+    if pts:
+        cv2.circle(display, pts[0], 5, (0, 255, 0), -1)
+        cv2.circle(display, pts[1], 5, (0, 255, 255), -1)
+        cv2.circle(display, pts[2], 5, (0, 255, 0), -1)
+        cv2.line(display, pts[0], pts[2], (255, 255, 255), 1)
 
-    if pitch_angle is not None:
+    if pitch_ratio is not None:
         elapsed = current_time - calibration_start_time
 
         if state == "CALIBRATE_NEUTRAL":
             draw_target(display, w // 2, h // 2)
-            cv2.putText(display, "1. Regarde DROIT DEVANT (Tete Droite)", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
-            neutral_angles.append(pitch_angle)
+            cv2.putText(display, "1. Regarde DROIT DEVANT", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+            neutral_ratios.append(pitch_ratio)
             cv2.putText(display, f"{3.0 - elapsed:.1f}s", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
             if elapsed > 3.0:
                 state, calibration_start_time = "CALIBRATE_DOWN", current_time
 
         elif state == "CALIBRATE_DOWN":
             draw_target(display, w // 2, h - 50)
-            cv2.putText(display, "2. Incline la TETE vers le BAS", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
-            down_angles.append(pitch_angle)
+            cv2.putText(display, "2. Incline la tete vers le BAS", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+            down_ratios.append(pitch_ratio)
             cv2.putText(display, f"{3.0 - elapsed:.1f}s", (30, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
             if elapsed > 3.0:
-                a_neutral = np.mean(neutral_angles)
-                a_down = np.mean(down_angles)
+                r_neutral = np.mean(neutral_ratios)
+                r_down = np.mean(down_ratios)
                 
-                direction = 1 if a_down > a_neutral else -1
-                thresh_down = a_neutral + (a_down - a_neutral) * 0.60
+                direction = 1 if r_down > r_neutral else -1
+                thresh_down = r_neutral + (r_down - r_neutral) * 0.60
                 
                 state = "RUNNING"
-                cv2.setWindowProperty('Calibration Head Pose', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                cv2.setWindowProperty('Calibration Head', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
 
         elif state == "RUNNING":
-            angle_history.append(pitch_angle)
-            smoothed_angle = np.mean(angle_history)
+            ratio_history.append(pitch_ratio)
+            smoothed_ratio = np.mean(ratio_history)
 
             if direction == 1:
-                gaze_zone = "ACTION" if smoothed_angle > thresh_down else "NEUTRE"
+                gaze_zone = "ACTION" if smoothed_ratio > thresh_down else "NEUTRE"
             else:
-                gaze_zone = "ACTION" if smoothed_angle < thresh_down else "NEUTRE"
+                gaze_zone = "ACTION" if smoothed_ratio < thresh_down else "NEUTRE"
 
             color = (0, 255, 0) if gaze_zone == "ACTION" else (0, 0, 255)
             font_s = 1.2 if gaze_zone == "ACTION" else 0.8
@@ -120,24 +118,24 @@ while cap.isOpened():
             x = (w - cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_s, 2)[0][0]) // 2
             cv2.putText(display, text, (x, h // 2), cv2.FONT_HERSHEY_SIMPLEX, font_s, color, 2)
 
-            cv2.putText(display, f"Angle : {smoothed_angle:.1f} | Seuil : {thresh_down:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            cv2.putText(display, f"Ratio : {smoothed_ratio:.3f} | Seuil : {thresh_down:.3f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
             cv2.putText(display, "[a] + Difficile | [d] - Difficile", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             cv2.putText(display, "[v] Valider et Sauvegarder | [r] Recalibrer | [q] Quitter", (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-    cv2.imshow('Calibration Head Pose', display)
+    cv2.imshow('Calibration Head', display)
     
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'): break
     elif key == ord('r') and state == "RUNNING":
-        state, neutral_angles, down_angles = "CALIBRATE_NEUTRAL", [], []
-        cv2.setWindowProperty('Calibration Head Pose', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        state, neutral_ratios, down_ratios = "CALIBRATE_NEUTRAL", [], []
+        cv2.setWindowProperty('Calibration Head', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         calibration_start_time = time.time()
         
-    elif key == ord('a') and state == "RUNNING": thresh_down += 0.5 * direction  
-    elif key == ord('d') and state == "RUNNING": thresh_down -= 0.5 * direction  
+    elif key == ord('a') and state == "RUNNING": thresh_down += 0.01 * direction  
+    elif key == ord('d') and state == "RUNNING": thresh_down -= 0.01 * direction  
     
     elif key == ord('v') and state == "RUNNING":
-        config = {"type": "head_pose_down", "thresh_down": thresh_down, "direction": direction}
+        config = {"type": "head_pose_ratio", "thresh_down": thresh_down, "direction": direction}
         with open('config.json', 'w') as f:
             json.dump(config, f)
         print("Paramètres sauvegardés avec succès.")
