@@ -6,7 +6,7 @@ import json
 import winsound
 from collections import deque
 
-WINDOW_SIZE = 12
+WINDOW_SIZE = 3
 CAMERA_INDEX = 0
 
 mp_face_mesh = mp.solutions.face_mesh
@@ -40,7 +40,7 @@ thresh_down, thresh_up = 0.0, 0.0
 r_neutral = 0.0
 direction = 1
 yaw_neutral = 0.50
-yaw_tolerance = 0.14
+yaw_tolerance = 0.25
 
 ratio_history = deque(maxlen=WINDOW_SIZE)
 
@@ -58,7 +58,8 @@ def draw_target(img, x, y):
 
 while cap.isOpened():
     success, image = cap.read()
-    if not success: break
+    if not success:
+        break
 
     image = cv2.flip(image, 1)
     h, w, _ = image.shape
@@ -191,23 +192,20 @@ while cap.isOpened():
         cv2.setWindowProperty('Calibration Head & Gaze', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         calibration_start_time = time.time()
     
-    # Ajustements verticaux
     elif key == ord('a') and state == "RUNNING": thresh_down += 0.01 * direction
     elif key == ord('d') and state == "RUNNING": thresh_down -= 0.01 * direction
     elif key == ord('z') and state == "RUNNING": thresh_up -= 0.01 * direction
     elif key == ord('s') and state == "RUNNING": thresh_up += 0.01 * direction
     
-    # Ajustements horizontaux (Yaw)
-    elif key == ord('e') and state == "RUNNING": yaw_tolerance = min(0.90, yaw_tolerance + 0.01)
-    elif key == ord('r') and state == "RUNNING": yaw_tolerance = max(0.04, yaw_tolerance - 0.01)
+    # Réglage tolérance Yaw (max 0.90)
+    elif key == ord('e') and state == "RUNNING": yaw_tolerance = min(0.90, yaw_tolerance + 0.02)
+    elif key == ord('r') and state == "RUNNING": yaw_tolerance = max(0.04, yaw_tolerance - 0.02)
     
-    # Sauvegarde
     elif key == ord('v') and state == "RUNNING":
         config = {
             "type": "head_pose_ratio_advanced",
             "thresh_down": thresh_down,
             "thresh_up": thresh_up,
-            "r_neutral": r_neutral,
             "yaw_neutral": yaw_neutral,
             "yaw_tolerance": yaw_tolerance,
             "direction": direction
